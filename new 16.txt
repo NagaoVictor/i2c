@@ -1,0 +1,52 @@
+#pacote
+i2c-tools
+
+#Escanear barramento i2c
+i2cdetect -l 
+
+#Escanear dispositivos
+i2cdetect -y 1 # O numero 1 simplimente mostra o barramento disponivel /dev/i2c-1 para 1
+
+#Escanear faixa
+i2cdetect -y 1 <from> <to>
+ex: i2cdetect -y 1 0x03 0x77
+
+#Ler um byte
+i2cget -y 1 0x40 0x00
+i2cget -y 1 0x40 0x00 b # (byte) Modo explicito
+i2cget -y 1 0x40 0x00 w # (word) - 16bits Modo explicito
+
+#Escrever um valor no caso o 0x10
+i2cset -y 1 0x40 0x00 0x10
+i2cset -y 1 0x40 0x00 0x1234 w # Escrever word
+
+#Bitwise com mascara
+i2cset -y 1 0x40 0x00 0x10 0xFF
+
+#Dump completo do dispositivo
+i2cdump -y 1 0x40
+i2cdump -y 1 0x40 b
+i2cdump -y 1 0x40 w
+i2cdump -y 1 0x40 0x0F # dump parcial
+
+#simular write + read combinado
+i2ctransfer -y 1 w1@0x40 0x00 r1 # w = write , r = read
+i2ctransfer -y 1 w3@0x40 0x00 0x10 0x20 # a partir de 0x00 escreva 0x10, no proximo registrador, escreva 0x20
+i2ctransfer -y 1 w4@0x40 0x00 0x10 0x15 0x20 r4 # a partir de 0x00 escreva 0x10, no proximo registrador, escreva 0x15 e no proximo escreva 20
+## No exemplo acima, os registradores ficarão assim, [0x00] = 0x10, [0x01] = 0x15, [0x02] = 0x20, a partir de 0x03 será lido 4 bytes.. Então 0x03,0x04,0x05,0x06
+
+#dispostivo fake baseado em dump
+i2c-stub-from-dump dump.txt
+
+
+
+# i2cdump -y 1 <endereco>
+#Tecnicas para descobrir quais registradores estão se movimentando no barramento
+i2cdump -y 1 0x40 > base.txt
+i2cdump -y 1 0x40 > changed.txt
+diff base.txt changed.txt
+
+#isso mostrará quais registradores estão sendo modificados mesmo sem programação.
+#mesmo assim, nao saberemos se o pino em si esta modificando o determinado registrador.
+
+watch -n 0.2 i2cdump -y 1 0x40
