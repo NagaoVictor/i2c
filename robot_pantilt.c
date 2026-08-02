@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -6,8 +7,6 @@
 
 #define I2C_BUS "/dev/i2c-1"
 #define PCA9685_ADDR 0x40
-
-#define CH_PAN  8
 #define CH_TILT 9
 
 void write_reg(int fd, unsigned char reg, unsigned char val) {
@@ -25,42 +24,6 @@ void set_pwm(int fd, int ch, int on, int off) {
     write(fd, buf, 5);
 }
 
-// Função de Tilt à prova de falhas baseada estritamente em Ticks
-void set_tilt_safe_ticks(int fd, int ticks) {
-    // -----------------------------------------------------------------
-    // DEFINA O TETO E O PISO DE TICKS PARA O SEU TILT AQUI:
-    // Se o limite inferior (onde ele bate/desce demais) for em X ticks,
-    // nós travamos o valor mínimo aqui.
-    // -----------------------------------------------------------------
-    int TICKS_MINIMO_PERMITIDO = 300; // Ajuste se precisar subir/descer mais
-    int TICKS_MAXIMO_PERMITIDO = 420; // Ajuste o limite do outro lado
-
-    if (ticks < TICKS_MINIMO_PERMITIDO) {
-        ticks = TICKS_MINIMO_PERMITIDO;
-    }
-    if (ticks > TICKS_MAXIMO_PERMITIDO) {
-        ticks = TICKS_MAXIMO_PERMITIDO;
-    }
-
-    set_pwm(fd, CH_TILT, 0, ticks);
-}
-
-void set_pan_ticks(int fd, int ticks) {
-    if (ticks < 150) ticks = 150;
-    if (ticks > 450) ticks = 450;
-    set_pwm(fd, CH_PAN, 0, ticks);
-}
-
-void pca9685_init(int fd) {
-    write_reg(fd, 0x00, 0x00);
-    usleep(1000);
-    write_reg(fd, 0x00, 0x10);
-    usleep(5000);
-    write_reg(fd, 0xFE, 121);  // 50Hz
-    write_reg(fd, 0x00, 0xA0);
-    usleep(10000);
-}
-
 int main() {
     int fd = open(I2C_BUS, O_RDWR);
     if (fd < 0 || ioctl(fd, I2C_SLAVE, PCA9685_ADDR) < 0) {
@@ -68,23 +31,36 @@ int main() {
         return 1;
     }
 
-    pca9685_init(fd);
-    printf("[+] Testando controle restrito de Ticks no Tilt...\n");
+    // Inicializa PCA9685 a 50Hz
+    write_reg(fd, 0x00, 0x00);
+    usleep(1000);
+    write_reg(fd, 0x00, 0x10);
+    usleep(5000);
+    write_reg(fd, 0xFE, 121);
+    write_reg(fd, 0x00, 0xA0);
+    usleep(10000);
 
-    // Centraliza
-    set_pan_ticks(fd, 312);
-    set_tilt_safe_ticks(fd, 312);
-    sleep(2);
+    printf("====================================================\n");
+    printf("   CALIBRADOR DE PONTO EXATO DO TILT (VERTICAL)\n");
+    printf("====================================================\n");
+    printf("Digite o valor em Ticks (ex: 200 a 400) para ver o servo\n");
+    printf("irem exatamente para o ponto de mira. Digite 0 para sair.\n\n");
 
-    // Tenta mandar para um valor baixo (que faria descer) -> Deve travar em 300
-    printf(" -> Tentando mandar ticks baixos (deve ser bloqueado pela trava)\n");
-    set_tilt_safe_ticks(fd, 150); 
-    sleep(2);
+    int ticks = 300; // Ponto inicial seguro
+    while (1) {
+        printf("Digite os ticks atuais para o Tilt (Atual: %d): ", ticks);
+        if (scanf("%d", &ticks) != 1) break;
+        if (ticks == 0) break;
 
-    // Retorna ao centro
-    set_tilt_safe_ticks(fd, 312);
+        // Trava de segurança absoluta para o seu teste não quebrar nada
+        if (ticks < 150) ticks = 150;
+        if (ticks > 450) ticks = 450;
+
+        set_pwm(fd, CH_TILT, 0, ticks);
+        printf("[+] Enviado %d ticks para o canal do Tilt.\n\n", ticks);
+    }
 
     close(fd);
-    printf("[+] Concluído.\n");
+    printf("Saindo...\n");
     return 0;
 }
