@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -7,7 +6,17 @@
 
 #define I2C_BUS "/dev/i2c-1"
 #define PCA9685_ADDR 0x40
-#define CH_TILT 9
+
+// Canais corrigidos e confirmados na sua bancada
+#define CH_TILT 8   // Cima / Baixo
+#define CH_PAN  9   // Esquerda / Direita
+
+// Limites seguros baseados na sua calibração
+#define TILT_MIN_TICKS  240   // Limite inferior seguro (não desce mais que isso)
+#define TILT_MAX_TICKS  420   // Limite superior (olhar para cima)
+
+#define PAN_MIN_TICKS   150   // Limite esquerdo
+#define PAN_MAX_TICKS   450   // Limite direito
 
 void write_reg(int fd, unsigned char reg, unsigned char val) {
     unsigned char buf[2] = {reg, val};
@@ -24,6 +33,30 @@ void set_pwm(int fd, int ch, int on, int off) {
     write(fd, buf, 5);
 }
 
+// Função segura para o TILT (Canal 8) - Nunca desce além de 240 ticks
+void set_tilt_safe(int fd, int ticks) {
+    if (ticks < TILT_MIN_TICKS) ticks = TILT_MIN_TICKS;
+    if (ticks > TILT_MAX_TICKS) ticks = TILT_MAX_TICKS;
+    set_pwm(fd, CH_TILT, 0, ticks);
+}
+
+// Função segura para o PAN (Canal 9)
+void set_pan_safe(int fd, int ticks) {
+    if (ticks < PAN_MIN_TICKS) ticks = PAN_MIN_TICKS;
+    if (ticks > PAN_MAX_TICKS) ticks = PAN_MAX_TICKS;
+    set_pwm(fd, CH_PAN, 0, ticks);
+}
+
+void pca9685_init(int fd) {
+    write_reg(fd, 0x00, 0x00); // Reset
+    usleep(1000);
+    write_reg(fd, 0x00, 0x10); // SLEEP
+    usleep(5000);
+    write_reg(fd, 0xFE, 121);  // 50Hz
+    write_reg(fd, 0x00, 0xA0); // Auto-Increment
+    usleep(10000);
+}
+
 int main() {
     int fd = open(I2C_BUS, O_RDWR);
     if (fd < 0 || ioctl(fd, I2C_SLAVE, PCA9685_ADDR) < 0) {
@@ -31,36 +64,39 @@ int main() {
         return 1;
     }
 
-    // Inicializa PCA9685 a 50Hz
-    write_reg(fd, 0x00, 0x00);
-    usleep(1000);
-    write_reg(fd, 0x00, 0x10);
-    usleep(5000);
-    write_reg(fd, 0xFE, 121);
-    write_reg(fd, 0x00, 0xA0);
-    usleep(10000);
+    pca9685_init(fd);
+    printf("[+] PCA9685 Inicializado. Executando rotina segura...\n");
 
-    printf("====================================================\n");
-    printf("   CALIBRADOR DE PONTO EXATO DO TILT (VERTICAL)\n");
-    printf("====================================================\n");
-    printf("Digite o valor em Ticks (ex: 200 a 400) para ver o servo\n");
-    printf("irem exatamente para o ponto de mira. Digite 0 para sair.\n\n");
+    // 1. Centraliza tudo (Pan no meio, Tilt no limite seguro inferior 240)
+    printf(" -> Movendo para a posição inicial (Centro / Mínimo seguro)\n");
+    set_pan_safe(fd, 300);
+    set_tilt_safe(fd, TILT_MIN_TICKS); // 240 ticks
+    sleep(2);
 
-    int ticks = 300; // Ponto inicial seguro
-    while (1) {
-        printf("Digite os ticks atuais para o Tilt (Atual: %d): ", ticks);
-        if (scanf("%d", &ticks) != 1) break;
-        if (ticks == 0) break;
+    // 2. Testa Pan (Esquerda e Direita)
+    printf(" -> Girando para a Esquerda\n");
+    set_pan_safe(fd, PAN_MIN_TICKS);
+    sleep(1);
 
-        // Trava de segurança absoluta para o seu teste não quebrar nada
-        if (ticks < 150) ticks = 150;
-        if (ticks > 450) ticks = 450;
+    printf(" -> Girando para a Direita\n");
+    set_pan_safe(fd, PAN_MAX_TICKS);
+    sleep(1);
 
-        set_pwm(fd, CH_TILT, 0, ticks);
-        printf("[+] Enviado %d ticks para o canal do Tilt.\n\n", ticks);
-    }
+    // Retorna Pan ao centro
+    set_pan_safe(fd, 300);
+    sleep(1);
+
+    // 3. Testa Tilt para Cima (Subindo a cabeça)
+    printf(" -> Levantando a cabeça (Tilt para cima)\n");
+    set_tilt_safe(fd, 360);
+    sleep(1);
+
+    // Retorna Tilt ao ponto mínimo seguro (240) sem forçar
+    printf(" -> Retornando ao ponto mínimo seguro (240 ticks)\n");
+    set_tilt_safe(fd, TILT_MIN_TICKS);
+    sleep(1);
 
     close(fd);
-    printf("Saindo...\n");
+    printf("[+] Rotina finalizada com sucesso! Sem trancos.\n");
     return 0;
 }
