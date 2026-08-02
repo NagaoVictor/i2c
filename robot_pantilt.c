@@ -10,18 +10,6 @@
 #define CH_PAN  8
 #define CH_TILT 9
 
-// ==========================================
-// AJUSTE OS LIMITES DE MOVIMENTO AQUI
-// ==========================================
-// PAN (Esquerda / Direita)
-#define PAN_MIN_DEG   20.0f   // Aumente se bater na esquerda (ex: 30.0f)
-#define PAN_MAX_DEG   160.0f  // Diminua se bater na direita (ex: 150.0f)
-
-// TILT (Cima / Baixo)
-#define TILT_MIN_DEG  70.0f   // Limite superior (olhar para cima)
-#define TILT_MAX_DEG  95.0f   // Limite inferior (olhar para baixo - ajuste fino para não forçar)
-// ==========================================
-
 void write_reg(int fd, unsigned char reg, unsigned char val) {
     unsigned char buf[2] = {reg, val};
     write(fd, buf, 2);
@@ -37,20 +25,30 @@ void set_pwm(int fd, int ch, int on, int off) {
     write(fd, buf, 5);
 }
 
-void set_servo_safe_angle(int fd, int channel, float angle) {
-    float min_deg = PAN_MIN_DEG;
-    float max_deg = PAN_MAX_DEG;
+// Função de Tilt à prova de falhas baseada estritamente em Ticks
+void set_tilt_safe_ticks(int fd, int ticks) {
+    // -----------------------------------------------------------------
+    // DEFINA O TETO E O PISO DE TICKS PARA O SEU TILT AQUI:
+    // Se o limite inferior (onde ele bate/desce demais) for em X ticks,
+    // nós travamos o valor mínimo aqui.
+    // -----------------------------------------------------------------
+    int TICKS_MINIMO_PERMITIDO = 300; // Ajuste se precisar subir/descer mais
+    int TICKS_MAXIMO_PERMITIDO = 420; // Ajuste o limite do outro lado
 
-    if (channel == CH_TILT) {
-        min_deg = TILT_MIN_DEG;
-        max_deg = TILT_MAX_DEG;
+    if (ticks < TICKS_MINIMO_PERMITIDO) {
+        ticks = TICKS_MINIMO_PERMITIDO;
+    }
+    if (ticks > TICKS_MAXIMO_PERMITIDO) {
+        ticks = TICKS_MAXIMO_PERMITIDO;
     }
 
-    if (angle < min_deg) angle = min_deg;
-    if (angle > max_deg) angle = max_deg;
+    set_pwm(fd, CH_TILT, 0, ticks);
+}
 
-    int ticks = (int)(140.0f + (angle / 180.0f) * (480.0f - 140.0f));
-    set_pwm(fd, channel, 0, ticks);
+void set_pan_ticks(int fd, int ticks) {
+    if (ticks < 150) ticks = 150;
+    if (ticks > 450) ticks = 450;
+    set_pwm(fd, CH_PAN, 0, ticks);
 }
 
 void pca9685_init(int fd) {
@@ -58,7 +56,7 @@ void pca9685_init(int fd) {
     usleep(1000);
     write_reg(fd, 0x00, 0x10);
     usleep(5000);
-    write_reg(fd, 0xFE, 121);
+    write_reg(fd, 0xFE, 121);  // 50Hz
     write_reg(fd, 0x00, 0xA0);
     usleep(10000);
 }
@@ -71,28 +69,22 @@ int main() {
     }
 
     pca9685_init(fd);
-    printf("[+] Testando limites de PAN (Esquerda/Direita) e TILT...\n");
+    printf("[+] Testando controle restrito de Ticks no Tilt...\n");
 
-    // Centro
-    set_servo_safe_angle(fd, CH_PAN, 90.0f);
-    set_servo_safe_angle(fd, CH_TILT, 90.0f);
+    // Centraliza
+    set_pan_ticks(fd, 312);
+    set_tilt_safe_ticks(fd, 312);
     sleep(2);
 
-    // Testa Limite Esquerdo
-    printf(" -> Movendo para o limite MÍNIMO do Pan (PAN_MIN_DEG = %.1f)\n", PAN_MIN_DEG);
-    set_servo_safe_angle(fd, CH_PAN, PAN_MIN_DEG);
-    sleep(2);
-
-    // Testa Limite Direito
-    printf(" -> Movendo para o limite MÁXIMO do Pan (PAN_MAX_DEG = %.1f)\n", PAN_MAX_DEG);
-    set_servo_safe_angle(fd, CH_PAN, PAN_MAX_DEG);
+    // Tenta mandar para um valor baixo (que faria descer) -> Deve travar em 300
+    printf(" -> Tentando mandar ticks baixos (deve ser bloqueado pela trava)\n");
+    set_tilt_safe_ticks(fd, 150); 
     sleep(2);
 
     // Retorna ao centro
-    set_servo_safe_angle(fd, CH_PAN, 90.0f);
-    sleep(1);
+    set_tilt_safe_ticks(fd, 312);
 
     close(fd);
-    printf("[+] Calibração de eixos finalizada.\n");
+    printf("[+] Concluído.\n");
     return 0;
 }
